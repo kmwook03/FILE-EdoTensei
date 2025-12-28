@@ -47,7 +47,7 @@ struct NTFS_VBR {
 struct MFT_ENTRY_HEADER {
     uint8_t signature[4]; // 0x00 - 0x03 'FILE' signature
     uint16_t fixup_offset; // 0x04 - 0x05 Offset to the fixup array
-    uint16_t fisup_entry_count; // 0x06 - 0x07 Number of entries in the fixup array
+    uint16_t fixup_entry_count; // 0x06 - 0x07 Number of entries in the fixup array
     uint64_t logfile_sequence_number; // 0x08 - 0x0F $LogFile sequence number (LSN)
     uint16_t sequence_number; // 0x10 - 0x11 Sequence number
     uint16_t link_count; // 0x12 - 0x13 Link count
@@ -62,7 +62,7 @@ struct MFT_ENTRY_HEADER {
 };
 
 // Attribute Header Structure
-struct ATTRIBUTE_HEADER {
+struct COMMON_ATTRIBUTE_HEADER {
     // Common attribute fields
     uint32_t type; // 0x00 - 0x03 Attribute type identifier
     uint32_t attribute_length; // 0x04 - 0x07 Length of the attribute
@@ -71,6 +71,26 @@ struct ATTRIBUTE_HEADER {
     uint16_t name_offset; // 0x0A - 0x0B Offset to the attribute name
     uint16_t flags; // 0x0C - 0x0D Attribute flags
     uint16_t attribute_id; // 0x0E - 0x0F Attribute identifier
+};
+
+struct RESIDENT_ATTRIBUTE_HEADER : public COMMON_ATTRIBUTE_HEADER {
+    // Resident attribute specific fields
+    uint32_t value_length; // 0x10 - 0x13 Length of the attribute value
+    uint16_t value_offset; // 0x14 - 0x15 Offset to the attribute value
+    uint8_t indexed_flag; // 0x16 - 0x16 Indexed flag
+    uint8_t unused; // 0x17 - 0x17 Padding for alignment
+};
+
+struct NON_RESIDENT_ATTRIBUTE_HEADER : public COMMON_ATTRIBUTE_HEADER {
+    // Non-resident attribute specific fields
+    uint64_t starting_vcn; // 0x10 - 0x17 Starting VCN of the attribute
+    uint64_t last_vcn; // 0x18 - 0x1F Last VCN of the attribute
+    uint16_t data_run_offset; // 0x20 - 0x21 Offset to the data runs
+    uint16_t compression_unit_size; // 0x22 - 0x23 Compression unit size
+    uint32_t unused; // 0x24 - 0x27 Padding for alignment
+    uint64_t allocated_size; // 0x28 - 0x2F Allocated size of the attribute
+    uint64_t data_size; // 0x30 - 0x37 Actual size of the attribute data
+    uint64_t initialized_size; // 0x38 - 0x3F Initialized size of the attribute data
 };
 
 #pragma pack(pop)
