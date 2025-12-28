@@ -4,6 +4,7 @@
 // prevent structure alignment
 #pragma pack(push, 1)
 
+// NTFS Volume Boot Record (VBR) Structure
 struct NTFS_VBR {
     // Jump instruction and OEM ID
     uint8_t jmp[3]; // 0x00 - 0x02 Jump instruction
@@ -40,6 +41,36 @@ struct NTFS_VBR {
 
     uint8_t boot_code[426]; // 0x54 - 0x1FD Boot code and error message
     uint16_t signature; // 0x1FE - 0x1FF Signature (0x55AA)  
+};
+
+// MFT Entry Header Structure
+struct MFT_ENTRY_HEADER {
+    uint8_t signature[4]; // 0x00 - 0x03 'FILE' signature
+    uint16_t fixup_offset; // 0x04 - 0x05 Offset to the fixup array
+    uint16_t fisup_entry_count; // 0x06 - 0x07 Number of entries in the fixup array
+    uint64_t logfile_sequence_number; // 0x08 - 0x0F $LogFile sequence number (LSN)
+    uint16_t sequence_number; // 0x10 - 0x11 Sequence number
+    uint16_t link_count; // 0x12 - 0x13 Link count
+    uint16_t first_attr_offset; // 0x14 - 0x15 Offset to the first attribute
+    uint16_t flags;      // 0x16 - 0x17 Flags
+    uint32_t used_size;  // 0x18 - 0x1B Size of the used portion of the entry
+    uint32_t allocated_size; // 0x1C - 0x1F Allocated size of MFT Entry
+    uint64_t base_ref;   // 0x20 - 0x27 Reference to the base MFT entry if this is a fragment
+    uint16_t next_attr_id; // 0x28 - 0x29 Next attribute ID
+    uint16_t padding;    // 0x2A - 0x2B Padding for alignment
+    uint32_t record_number; // 0x2C - 0x2F Record number of this MFT entry
+};
+
+// Attribute Header Structure
+struct ATTRIBUTE_HEADER {
+    // Common attribute fields
+    uint32_t type; // 0x00 - 0x03 Attribute type identifier
+    uint32_t attribute_length; // 0x04 - 0x07 Length of the attribute
+    uint8_t non_resident_flag; // 0x08 - 0x08 Non-resident flag (0 = resident, 1 = non-resident)
+    uint8_t name_length; // 0x09 - 0x09 Length of the attribute name in characters
+    uint16_t name_offset; // 0x0A - 0x0B Offset to the attribute name
+    uint16_t flags; // 0x0C - 0x0D Attribute flags
+    uint16_t attribute_id; // 0x0E - 0x0F Attribute identifier
 };
 
 #pragma pack(pop)
