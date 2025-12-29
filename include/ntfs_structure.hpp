@@ -1,3 +1,6 @@
+#ifndef NTFS_STRUCTURE_HPP
+#define NTFS_STRUCTURE_HPP
+
 #pragma once
 #include <cstdint>
 
@@ -94,3 +97,5 @@ struct NON_RESIDENT_ATTRIBUTE_HEADER : public COMMON_ATTRIBUTE_HEADER {
 };
 
 #pragma pack(pop)
+
+#endif // NTFS_STRUCTURE_HPP
