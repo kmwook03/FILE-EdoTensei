@@ -2,6 +2,12 @@
 #include <fstream>
 #include <iostream>
 
+NTFSReader::NTFSReader() {}
+
+NTFSReader::~NTFSReader() {
+    closeImage();
+}
+
 bool NTFSReader::openImage(const std::string& path) {
     diskImage.open(path, std::ios::binary);
 

@@ -5,8 +5,9 @@ int main() {
     NTFSReader reader;
     NTFS_VBR vbr;
 
-    if (reader.openImage("disk_image.img")) {
-        if (reader.readVBR(vbr)) {
+    if (reader.openImage("/mnt/c/Users/kmwook/Desktop/diskImage.001")) {
+        uint64_t offset = 1048576; // Example offset
+        if (reader.readRaw(offset, &vbr, sizeof(NTFS_VBR))) {
             // check OEM ID
             std::cout << "OEM ID: ";
             for (int i=0; i<8; ++i) std::cout << vbr.oem_id[i];

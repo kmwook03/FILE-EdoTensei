@@ -24,7 +24,6 @@ public:
 
 private:
     // Handle to the disk image
-    void* imageHandle;
     std::ifstream diskImage;
 };
 
