@@ -7,6 +7,23 @@
 // prevent structure alignment
 #pragma pack(push, 1)
 
+// MBR Partition Table Entry (PTE) Structure
+struct MBR_PTE {
+    uint8_t boot_flag; // 0x00 - 0x00 Boot flag (0x80 = bootable, 0x00 = non-bootable)
+    uint8_t start_chs[3]; // 0x01 - 0x03 Starting CHS address
+    uint8_t fs_type; // 0x04 - 0x04 File system type (0x07 = NTFS)
+    uint8_t end_chs[3]; // 0x05 - 0x07 Ending CHS address
+    uint32_t start_lba; // 0x08 - 0x0B Starting LBA sector
+    uint32_t total_sectors; // 0x0C - 0x0F Total number of sectors in the partition
+};
+
+// NTFS Master Boot Record (MBR) Structure
+struct NTFS_MBR {
+    uint8_t boot_code[446]; // 0x00 - 0x1BD Boot code
+    MBR_PTE partition[4]; // 0x1BE - 0x1FD Partition table entries
+    uint16_t signature; // 0x1FE - 0x1FF Signature (0x55AA)
+};
+
 // NTFS Volume Boot Record (VBR) Structure
 struct NTFS_VBR {
     // Jump instruction and OEM ID
