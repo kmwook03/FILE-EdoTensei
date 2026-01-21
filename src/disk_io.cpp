@@ -1,4 +1,4 @@
-#include "../include/disk_io.hpp"
+#include "disk_io.hpp"
 #include <fstream>
 #include <iostream>
 #include <vector>

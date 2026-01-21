@@ -1,33 +1,25 @@
-#include "../include/disk_io.hpp"
 #include <iostream>
+#include "carver.hpp"
 
-int main() {
-    NTFSReader reader;
-
-    // Open disk image
-    if (!reader.openImage("/mnt/c/Users/kmwook/Desktop/diskImage.001")) return 1;
-    
-    // Find NTFS partition offset
-    uint64_t partition_offset = reader.findNTFSPartitionOffset();
-
-    if (partition_offset != 0) {
-        std::cout << "NTFS partition found at offset: " << partition_offset << std::endl;
-        NTFS_VBR vbr;
-        if (reader.readRaw(partition_offset, &vbr, sizeof(NTFS_VBR))) {
-            // Calculate MFT offset and entry size
-            uint64_t mft_offset = partition_offset + (vbr.mft_lcn * vbr.sectors_per_cluster * vbr.bytes_per_sector);
-            uint32_t entry_size = (vbr.mft_record_size_raw < 0) ? (1 << (-vbr.mft_record_size_raw)) : (vbr.mft_record_size_raw * vbr.sectors_per_cluster * vbr.bytes_per_sector);
-            uint32_t bytes_per_cluster = vbr.sectors_per_cluster * vbr.bytes_per_sector;
-            std::cout << "MFT starts at offset: " << mft_offset << " (Entry size: " << entry_size << ")" << std::endl;
-            
-            // Scan for deleted files in MFT
-            reader.scanAllMFTSegments(partition_offset, mft_offset, bytes_per_cluster, entry_size);
-        }
-    } else {
-        std::cerr << "Error: No NTFS partition found." << std::endl;
-        reader.closeImage();
+int main(int argc, char* argv[]) {
+    // check for correct number of arguments
+    if (argc != 2) {
+        std::cout << "Usage: " << argv[0] << " <disk_image_path>" << std::endl;
+        std::cout << "Example: " << argv[0] << " disk.img" << std::endl;
+        return 1;
     }
-    reader.closeImage();
 
+    std::string imagePath = argv[1];
+    FileCarver carver(imagePath);
+
+    std::cout << "[*] Initializing File Carver for: " << imagePath << "..." << std::endl;
+    if (!carver.initialize()) {
+        return 1;
+    }
+
+    std::cout << "[*] Starting file carving process. This may take a while..." << std::endl;
+    carver.startCarving();
+
+    std::cout << "[*] File carving completed." << std::endl;
     return 0;
 }
