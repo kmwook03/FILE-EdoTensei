@@ -11,6 +11,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/app)
 set(SOURCES
     src/main.cpp
     src/carver.cpp
+    src/searcher.cpp
 )   
 
 add_executable(FILEEdo ${SOURCES})

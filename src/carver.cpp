@@ -1,4 +1,5 @@
-#include "../include/carver.hpp"
+#include "carver.hpp"
+#include "searcher.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 #include <iostream>
@@ -39,57 +40,80 @@ void FileCarver::startCarving() {
 
         scanBuffer(buffer, currentOffset);
         
-        if (currentOffset + bytesRead < diskSize_) {
-            currentOffset += bytesRead - overlap;
-        } else {
-        currentOffset += bytesRead;
+        if (isExtracting_) currentOffset += bytesRead;
+        else {
+            if (currentOffset + bytesRead < diskSize_) {
+                currentOffset += bytesRead - overlap;
+            } else {
+            currentOffset += bytesRead;
+            }
         }
     }
 }
 
 void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t currentOffset) {
     // Scan the buffer for file signatures
-    for (size_t i = 0; i < buffer.size(); ++i) {
-        uint64_t absolutePos = currentOffset + i;
+    size_t currentBufferIdx = 0;
+    size_t bufferSize = buffer.size();
+
+    while (currentBufferIdx < bufferSize) {
+        // fine Header
         if (!isExtracting_) {
+            bool foundHeader = false;
             for (const auto& sig : signatures_) {
-                if (matchSignature(buffer, i, sig.header)) {
+                int64_t foundIdx = Searcher::search(buffer, sig.header, currentBufferIdx);
+                if (foundIdx != -1) {
+                    size_t foundPos = static_cast<size_t>(foundIdx);
+
                     isExtracting_ = true;
                     activeSignature_ = &sig;
 
-                    startNewFile(currentOffset + i);
+                    uint64_t headerOffset = currentOffset + foundPos;
+                    startNewFile(headerOffset);
                     writeData(sig.header.data(), sig.header.size());
 
-                    lastProcessedOffset_ = absolutePos + sig.header.size() - 1;
-                    i += sig.header.size() - 1;
+                    currentBufferIdx = foundPos + sig.header.size();
+                    foundHeader = true;
                     break;
                 }
             }
+            
+            if (!foundHeader) break;
         } else {
-            if (absolutePos <= lastProcessedOffset_) {
-                continue;
-            }
+            if (activeSignature_->hasFooter) {
+                int64_t foundIdx = Searcher::search(buffer, activeSignature_->footer, currentBufferIdx);
 
-            if (activeSignature_->hasFooter && matchSignature(buffer, i, activeSignature_->footer)) {
-                writeData(activeSignature_->footer.data(), activeSignature_->footer.size());
-                size_t footerSize = activeSignature_->footer.size();
-                finishFile();
+                if (foundIdx != -1) {
+                    size_t foundPos = static_cast<size_t>(foundIdx);
 
-                isExtracting_ = false;
-                activeSignature_ = nullptr;
+                    size_t dataSize = foundPos - currentBufferIdx;
+                    if (dataSize > 0) {
+                        writeData(buffer.data() + currentBufferIdx, dataSize);
+                    }
 
-                i += footerSize - 1;
-            } else {
-                uint8_t currentByte = buffer[i];
-                writeData(&currentByte, 1);
-            }
+                    writeData(activeSignature_->footer.data(), activeSignature_->footer.size());
+                    size_t footerSize = activeSignature_->footer.size();
+
+                    finishFile();
+
+                    isExtracting_ = false;
+                    activeSignature_ = nullptr;
+
+                    currentBufferIdx = foundPos + footerSize;
+                } else {
+                    if (outputStream_.tellp() > 50 * 1024 * 1024) {
+                        std::cerr << " [!] Warning: File too large." << std::endl;
+                        finishFile();
+                        isExtracting_ = false;
+                        activeSignature_ = nullptr;
+                        break;
+                    }
+                    writeData(buffer.data() + currentBufferIdx, bufferSize - currentBufferIdx);
+                    break;
+                }
+            } else break;
         }
     }
-}
-
-bool FileCarver::matchSignature(const std::vector<uint8_t>& buffer, size_t offset, const std::vector<uint8_t>& signature) {
-    if (offset + signature.size() > buffer.size()) return false;
-    return std::memcmp(buffer.data() + offset, signature.data(), signature.size()) == 0;
 }
 
 void FileCarver::startNewFile(uint64_t offset) {

@@ -8,19 +8,27 @@
 // Class for carving files from a disk image
 class FileCarver {
 public:
-    // Constructor and Destructor
-    // @param path: Path to the disk image file
+    /** 
+     * @brief Constructor
+     * @param path: Path to the disk image file
+     */
     explicit FileCarver(const std::string& path);
 
-    // Destructor
+    /** 
+     * @brief Destructor
+     */
     ~FileCarver();
 
-    // initialize the carver
-    // @return: true if initialization is successful, false otherwise
+    /** 
+     * @brief Initialize the carver
+     * @return: true if initialization is successful, false otherwise
+     */
     bool initialize();
 
-    // Start the file carving process
-    // @return: void
+    /** 
+     * @brief Start the file carving process
+     * @return: void
+     */
     void startCarving();
 
 private:
@@ -39,29 +47,32 @@ private:
 
     // --- Private Methods ---
 
-    // Scan a buffer for file signatures
-    // @param buffer: The buffer to scan
-    // @param currentOffset: The current offset in the file
-    // @return: void
+    /** 
+     * Scan a buffer for file signatures
+     * @param buffer: The buffer to scan
+     * @param currentOffset: The current offset in the file
+     * @return: void
+     */
     void scanBuffer(const std::vector<uint8_t>& buffer, uint64_t currentOffset);
-    
-    // Match a signature in the buffer at a given offset
-    // @param buffer: The buffer to scan
-    // @param offset: The offset in the buffer to start matching
-    // @param signature: The signature to match
-    // @return: true if the signature matches, false otherwise
-    bool matchSignature(const std::vector<uint8_t>& buffer, size_t offset, const std::vector<uint8_t>& signature);
 
-    // Start a new file extraction
-    // @param offset: The offset in the disk image where the file starts
+    /**
+     * @brief Start a new file extraction
+     * @param offset: The offset in the disk image where the file starts
+     * @return: void
+     */
     void startNewFile(uint64_t offset);
 
-    // Write data to the currently extracted file
-    // @param data: Pointer to the data to write
-    // @param size: Size of the data to write
+    /** 
+     * @brief Write data to the currently extracted file
+     * @param data: Pointer to the data to write
+     * @param size: Size of the data to write
+     * @return: void
+     */
     void writeData(const uint8_t* data, size_t size);
 
-    // Finish the current file extraction
-    // @return: void
+    /** 
+     * @brief Finish the current file extraction
+     * @return: void
+     */
     void finishFile();
 };
