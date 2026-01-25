@@ -1,6 +1,4 @@
-#ifndef SIGNATURE_HPP
-#define SIGNATURE_HPP
-
+#pragma once
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -29,5 +27,3 @@ public:
         };
     }
 };
-
-#endif // SIGNATURE_HPP

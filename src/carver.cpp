@@ -101,13 +101,13 @@ void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t current
 
                     currentBufferIdx = foundPos + footerSize;
                 } else {
-                    if (outputStream_.tellp() > 50 * 1024 * 1024) {
-                        std::cerr << " [!] Warning: File too large." << std::endl;
-                        finishFile();
-                        isExtracting_ = false;
-                        activeSignature_ = nullptr;
-                        break;
-                    }
+                    // if (outputStream_.tellp() > 50 * 1024 * 1024) {
+                    //     std::cerr << " [!] Warning: File too large." << std::endl;
+                    //     finishFile();
+                    //     isExtracting_ = false;
+                    //     activeSignature_ = nullptr;
+                    //     break;
+                    // }
                     writeData(buffer.data() + currentBufferIdx, bufferSize - currentBufferIdx);
                     break;
                 }
