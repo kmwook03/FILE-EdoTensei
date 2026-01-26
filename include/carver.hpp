@@ -2,7 +2,6 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <fstream>
 #include "signature.hpp"
 
 // Class for carving files from a disk image
@@ -42,8 +41,9 @@ private:
     bool isExtracting_ = false;                      // Flag to indicate if currently extracting a file
     uint64_t lastProcessedOffset_ = 0;               // Last processed offset in the disk image
     const FileSignature* activeSignature_ = nullptr; // Currently active file signature being processed
-    std::ofstream outputStream_;                     // Output stream for the extracted file
+    int out_fd_ = -1;                     // Output file descriptor
     std::vector<FileSignature> signatures_; // Vector of file signatures to look for
+    off_t lastValidFooterOffset_ = 0;
 
     // --- Private Methods ---
 
@@ -75,4 +75,14 @@ private:
      * @return: void
      */
     void finishFile();
+
+    /**
+     * 
+     */
+    void recordCandidateEndOfFile();
+
+    /**
+     * 
+     */
+    void finalizeIncrementalFile();
 };
