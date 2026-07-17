@@ -22,14 +22,15 @@ bool FileCarver::initialize() {
 
     diskSize_ = lseek64(fd_, 0, SEEK_END);          // Get the size of the disk image
     lseek64(fd_, 0, SEEK_SET);                      // Reset file offset to the beginning
-    signatures_ = SignatureDB::getSignatures();     // Load file signatures
+    formats_ = SignatureDB::getFormats();           // Load file format descriptors
+    scanner_.build(formats_);
     return true;
 }
 
 void FileCarver::startCarving() {
     std::vector<uint8_t> buffer(bufferSize_);   // Buffer for reading file data
     uint64_t currentOffset = 0;                 // Current offset in the disk image
-    const size_t overlap = 16;                  // Overlap size to handle signatures across buffer boundaries
+    const size_t overlap = scanner_.maxPatternLength() > 0 ? scanner_.maxPatternLength() - 1 : 0;
 
     while (currentOffset < diskSize_) {
         lseek64(fd_, currentOffset, SEEK_SET);
@@ -43,7 +44,7 @@ void FileCarver::startCarving() {
         if (isExtracting_) currentOffset += bytesRead;
         else {
             if (currentOffset + bytesRead < diskSize_) {
-                currentOffset += bytesRead - overlap;
+                currentOffset += bytesRead > static_cast<ssize_t>(overlap) ? bytesRead - overlap : bytesRead;
             } else {
             currentOffset += bytesRead;
             }
@@ -54,40 +55,31 @@ void FileCarver::startCarving() {
 void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t currentOffset) {
     size_t currentBufferIdx = 0;
     size_t bufferSize = buffer.size();
+    std::vector<SearchMatch> matches = scanner_.findAll(buffer);
 
     while (currentBufferIdx < bufferSize) {
         // Search Header
         if (!isExtracting_) {
-            bool foundHeader = false;
-            int64_t bestFoundIdx = -1;
-            const FileSignature* bestSig = nullptr;
+            const SearchMatch* headerMatch = findNextHeaderMatch(matches, currentBufferIdx);
 
-            // Find the earliest header in the buffer
-            for (const auto& sig : signatures_) {
-                int64_t foundIdx = Searcher::search(buffer, sig.header, currentBufferIdx);
-                if (foundIdx != -1) {
-                    if (bestFoundIdx == -1 || foundIdx < bestFoundIdx) {
-                        bestFoundIdx = foundIdx;
-                        bestSig = &sig;
-                    }
-                }
-            }
-
-            if (bestFoundIdx != -1) {
-                size_t foundPos = static_cast<size_t>(bestFoundIdx);
+            if (headerMatch) {
+                size_t foundPos = headerMatch->offset;
+                const FormatDescriptor& format = formats_[headerMatch->metadata.formatIndex];
+                const BytePattern* header = format.primaryHeader();
+                if (!header) break;
                 
                 isExtracting_ = true;
-                activeSignature_ = bestSig;
+                activeFormat_ = &format;
 
                 uint64_t headerOffset = currentOffset + foundPos;
                 startNewFile(headerOffset);
-                writeData(bestSig->header.data(), bestSig->header.size());
+                writeData(header->bytes.data(), header->bytes.size());
 
-                if (bestSig->extension == "pdf") {
+                if (format.extension == "pdf") {
                     std::cout << "[Debug] Found PDF Start at offset: " << headerOffset << std::endl;
                 }
 
-                currentBufferIdx = foundPos + bestSig->header.size();
+                currentBufferIdx = foundPos + header->bytes.size();
                 // back to top of while loop
                 continue; 
             }
@@ -98,45 +90,24 @@ void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t current
         
         // Data extraction and collision/Footer detection
         else {
-            size_t writeEndIdx = bufferSize; // 기본적으로 버퍼 끝까지 씀
-            bool collisionDetected = false;
-            size_t collisionIdx = 0;
-
             // 1. [Collision Detection] Search for 'other file headers' within the buffer
             // When extracting PDF, ignore JPG headers (FF D8) due to Embedded Images
             // But if other PDF or PNG headers appear, we should stop.
-            
-            for (const auto& sig : signatures_) {
-                // When extracting PDF: only consider same PDF headers or PNG headers as collisions (ignore JPG)
-                if (activeSignature_->extension == "pdf") {
-                    if (sig.extension == "jpg") continue; 
-                }
-
-                // Search from current position
-                int64_t foundIdx = Searcher::search(buffer, sig.header, currentBufferIdx);
-                
-                // If found and within current processing range, it's a collision!
-                if (foundIdx != -1) {
-                    // Find the earliest collision point
-                    if (!collisionDetected || static_cast<size_t>(foundIdx) < collisionIdx) {
-                        collisionIdx = static_cast<size_t>(foundIdx);
-                        collisionDetected = true;
-                    }
-                }
-            }
+            const SearchMatch* collisionMatch = findNextCollisionMatch(matches, currentBufferIdx);
 
             // 2. [Footer Search] Search for the active file's footer
-            int64_t footerIdx = -1;
-            if (activeSignature_->hasFooter) {
-                footerIdx = Searcher::search(buffer, activeSignature_->footer, currentBufferIdx);
-            }
+            const SearchMatch* footerMatch = findNextFooterMatch(matches, currentBufferIdx);
+            size_t footerIdx = 0;
+            const BytePattern* footer = activeFormat_->primaryFooter();
+            bool footerDetected = footerMatch && footer;
+            if (footerDetected) footerIdx = footerMatch->offset;
 
             // Footer vs New Header vs Buffer End
             
             // Case A: Collision (new file) occurred before Footer, or collision occurred without Footer
-            if (collisionDetected && (footerIdx == -1 || collisionIdx < static_cast<size_t>(footerIdx))) {
+            if (collisionMatch && (!footerDetected || collisionMatch->offset < footerIdx)) {
                 // Write data up to collision point
-                writeData(buffer.data() + currentBufferIdx, collisionIdx - currentBufferIdx);
+                writeData(buffer.data() + currentBufferIdx, collisionMatch->offset - currentBufferIdx);
                 
                 std::cout << "[Debug] Collision detected! Switching file..." << std::endl;
                 
@@ -145,13 +116,13 @@ void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t current
                 
                 // Move the index to the collision point and since isExtracting_ is now false,
                 // the next loop will execute [Mode 1] to find a new file.
-                currentBufferIdx = collisionIdx;
+                currentBufferIdx = collisionMatch->offset;
                 continue;
             }
 
             // Case B: Footer found (no collision or Footer before collision)
-            if (footerIdx != -1) {
-                size_t foundPos = static_cast<size_t>(footerIdx);
+            if (footerDetected) {
+                size_t foundPos = footerIdx;
                 
                 // Write data up to Footer
                 if (foundPos > currentBufferIdx) {
@@ -159,18 +130,18 @@ void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t current
                 }
                 
                 // Write Footer
-                writeData(activeSignature_->footer.data(), activeSignature_->footer.size());
-                size_t footerSize = activeSignature_->footer.size();
+                writeData(footer->bytes.data(), footer->bytes.size());
+                size_t footerSize = footer->bytes.size();
                 size_t nextIdx = foundPos + footerSize;
 
-                if (activeSignature_->isIncremental) {
+                if (activeFormat_->isIncremental()) {
                     recordCandidateEndOfFile(); // For PDF, do not close but record candidate point
                     currentBufferIdx = nextIdx;
                     continue; // Continue scanning
                 } else {
                     finishFile(); // For JPG, PNG, finish immediately
                     isExtracting_ = false;
-                    activeSignature_ = nullptr;
+                    activeFormat_ = nullptr;
                     currentBufferIdx = nextIdx;
                     continue;
                 }
@@ -182,8 +153,54 @@ void FileCarver::scanBuffer(const std::vector<uint8_t>& buffer, uint64_t current
         }
     }
 }
+
+const SearchMatch* FileCarver::findNextHeaderMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const {
+    for (const auto& match : matches) {
+        if (match.offset < startIdx || match.metadata.kind != PatternKind::Header) continue;
+        if (match.metadata.formatIndex >= formats_.size()) continue;
+        return &match;
+    }
+    return nullptr;
+}
+
+const SearchMatch* FileCarver::findNextCollisionMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const {
+    for (const auto& match : matches) {
+        if (match.offset < startIdx || match.metadata.kind != PatternKind::Header) continue;
+        if (match.metadata.formatIndex >= formats_.size()) continue;
+
+        const FormatDescriptor& format = formats_[match.metadata.formatIndex];
+        if (activeFormat_ && activeFormat_->allowEmbeddedJpgHeaders && format.extension == "jpg") {
+            continue;
+        }
+
+        return &match;
+    }
+    return nullptr;
+}
+
+const SearchMatch* FileCarver::findNextFooterMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const {
+    if (!activeFormat_ || !activeFormat_->hasFooter()) return nullptr;
+
+    size_t activeFormatIndex = formats_.size();
+    for (size_t i = 0; i < formats_.size(); ++i) {
+        if (&formats_[i] == activeFormat_) {
+            activeFormatIndex = i;
+            break;
+        }
+    }
+
+    if (activeFormatIndex == formats_.size()) return nullptr;
+
+    for (const auto& match : matches) {
+        if (match.offset < startIdx || match.metadata.kind != PatternKind::Footer) continue;
+        if (match.metadata.formatIndex == activeFormatIndex) return &match;
+    }
+    return nullptr;
+}
+
 void FileCarver::startNewFile(uint64_t offset) {
-    std::string fileName = "recovered_" + std::to_string(offset) + "." + activeSignature_->extension;
+    std::string fileName = "recovered_" + std::to_string(offset) + "." + activeFormat_->extension;
+    lastValidFooterOffset_ = 0;
 
     // O_WRONLY: Open for write only
     // O_CREAT: Create file if it does not exist
@@ -198,10 +215,10 @@ void FileCarver::startNewFile(uint64_t offset) {
 void FileCarver::writeData(const uint8_t* data, size_t size) {
     if (out_fd_ < 0) return;
 
-    const off_t MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+    const off_t maxFileSize = activeFormat_ ? static_cast<off_t>(activeFormat_->maxFileSize) : 100 * 1024 * 1024;
     off_t currentSize = lseek(out_fd_, 0, SEEK_CUR);
 
-    if (currentSize + static_cast<off_t>(size) > MAX_FILE_SIZE) {
+    if (currentSize + static_cast<off_t>(size) > maxFileSize) {
         std::cerr << "[-] Max file size reached. Force finalizing." << std::endl;
         finalizeIncrementalFile(); 
         return;
@@ -231,7 +248,7 @@ void FileCarver::recordCandidateEndOfFile() {
 void FileCarver::finalizeIncrementalFile() {
     if (out_fd_ < 0) return;
 
-    if (activeSignature_ && activeSignature_->isIncremental && lastValidFooterOffset_ > 0) {
+    if (activeFormat_ && activeFormat_->isIncremental() && lastValidFooterOffset_ > 0) {
         off_t currentSize = lseek(out_fd_, 0, SEEK_CUR);
         if (currentSize > lastValidFooterOffset_) {
             if (ftruncate(out_fd_, lastValidFooterOffset_) == -1) {
@@ -245,5 +262,5 @@ void FileCarver::finalizeIncrementalFile() {
     close(out_fd_);
     out_fd_ = -1;
     isExtracting_ = false;
-    activeSignature_ = nullptr;
+    activeFormat_ = nullptr;
 }

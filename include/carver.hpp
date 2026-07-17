@@ -3,6 +3,7 @@
 #include <vector>
 #include <cstdint>
 #include "signature.hpp"
+#include "searcher.hpp"
 
 // Class for carving files from a disk image
 class FileCarver {
@@ -40,9 +41,10 @@ private:
     // --- Carving state management ---
     bool isExtracting_ = false;                      // Flag to indicate if currently extracting a file
     uint64_t lastProcessedOffset_ = 0;               // Last processed offset in the disk image
-    const FileSignature* activeSignature_ = nullptr; // Currently active file signature being processed
+    const FormatDescriptor* activeFormat_ = nullptr; // Currently active file format being processed
     int out_fd_ = -1;                     // Output file descriptor
-    std::vector<FileSignature> signatures_; // Vector of file signatures to look for
+    std::vector<FormatDescriptor> formats_; // Vector of file formats to look for
+    Searcher scanner_;
     off_t lastValidFooterOffset_ = 0;
 
     // --- Private Methods ---
@@ -54,6 +56,10 @@ private:
      * @return: void
      */
     void scanBuffer(const std::vector<uint8_t>& buffer, uint64_t currentOffset);
+
+    const SearchMatch* findNextHeaderMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
+    const SearchMatch* findNextCollisionMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
+    const SearchMatch* findNextFooterMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
 
     /**
      * @brief Start a new file extraction
