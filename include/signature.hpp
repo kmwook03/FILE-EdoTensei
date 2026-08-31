@@ -1,30 +1,42 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
-struct FileSignature {
-    std::string extension;                     // Type of the file (e.g., "JPEG", "PNG")
-    std::vector<uint8_t> header;          // Byte sequence representing the file header
-    std::vector<uint8_t> footer;          // Byte sequence representing the file footer (not always present)
-    bool hasFooter;                       // Indicates if the file type has a footer
-    bool isIncremental;                    // Indicates if the file can be carved incrementally
+enum class PatternKind { Header, Footer, StructuralAnchor };
 
-    FileSignature(std::string ext, std::vector<uint8_t> h, std::vector<uint8_t> f, bool hf, bool inc = false)
-        : extension(ext), header(h), footer(f), hasFooter(hf), isIncremental(inc) {}
+struct BytePattern {
+    std::string id;
+    PatternKind kind;
+    std::vector<uint8_t> bytes;
+};
+
+struct FormatDescriptor {
+    std::string id;
+    std::string extension;
+    std::string name;
+    std::vector<BytePattern> patterns;
+    uint64_t maxFileSize;
 };
 
 class SignatureDB {
 public:
-    static std::vector<FileSignature> getSignatures() {
+    static std::vector<FormatDescriptor> getFormats() {
+        constexpr uint64_t mib = 1024ULL * 1024ULL;
         return {
-            // JPG
-            FileSignature("jpg", {0xFF, 0xD8, 0xFF}, {0xFF, 0xD9}, true, false),
-            // PNG
-            FileSignature("png", {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, 
-                                 {0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82}, true, false),
-            // PDF
-            FileSignature("pdf", {0x25, 0x50, 0x44, 0x46, 0x2D}, {0x25, 0x25, 0x45, 0x4F, 0x46}, true, true)
+            {"jpeg", "jpg", "JPEG image",
+             {{"jpeg.soi", PatternKind::Header, {0xff, 0xd8, 0xff}},
+              {"jpeg.eoi", PatternKind::Footer, {0xff, 0xd9}}}, 100 * mib},
+            {"png", "png", "PNG image",
+             {{"png.signature", PatternKind::Header,
+               {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}},
+              {"png.iend", PatternKind::Footer,
+               {0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}}}, 100 * mib},
+            {"pdf", "pdf", "PDF document",
+             {{"pdf.header", PatternKind::Header, {'%', 'P', 'D', 'F', '-'}},
+              {"pdf.eof", PatternKind::Footer, {'%', '%', 'E', 'O', 'F'}},
+              {"pdf.startxref", PatternKind::StructuralAnchor,
+               {'s', 't', 'a', 'r', 't', 'x', 'r', 'e', 'f'}}}, 500 * mib}
         };
     }
 };

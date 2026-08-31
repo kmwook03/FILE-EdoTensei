@@ -15,8 +15,11 @@ output/
 data/samples/
 logs/
 build/
+build-*/
 app/
 recovered_files/
+AGENTS.md
+plan.md
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

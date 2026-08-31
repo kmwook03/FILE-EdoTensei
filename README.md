@@ -1,60 +1,109 @@
-# FILE-EdoTensei
+# 💾 FILE-EdoTensei
+FILE-EdoTensei is a Linux-focused C++17 forensic file-recovery tool. It scans an
+image once with Aho-Corasick, validates each discovered candidate with a
+format-specific parser, and writes deterministic evidence and recovery results.
+It is best-effort software: a high score is useful ranking evidence, not a claim
+that recovered content is complete or authentic.
 
-### 개요
-본 프로젝트는 NTFS 등의 파일 시스템에서 메타데이터(MFT 영역 등)가 손상되거나 의도적으로 파괴되어 OS가 파일을 식별할 수 없는 상황을 해결하기 위한 디지털 포렌식 도구입니다. 파일 시스템의 논리적 구조에 의존하지 않고, 저장 매체의 **Raw Data(바이트 스트림)**를 직접 스캔하여 파일 고유의 시그니처를 기반으로 데이터를 재구성합니다
+## Skills & Environment
 
-### 핵심 기능
-> Disk I/O
+![C++](https://img.shields.io/badge/c%2B%2B-%2300599C.svg?style=for-the-badge&logo=cplusplus&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-%23E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-%23FCC624.svg?style=for-the-badge&logo=linux&logoColor=black) ![CMake](https://img.shields.io/badge/CMake-%23008FBA.svg?style=for-the-badge&logo=cmake&logoColor=white)
 
-표준 I/O 라이브러리 대신 리눅스 시스템 콜을 직접 호출하여 디스크 I/O를 정밀하게 제어하고 오버헤드를 최소화합니다.
-
-> 고속 패턴 매칭
-
-Boyer-Moore-Horspool(BMH) 알고리즘을 채택하여 대용량 디스크 이미지 분석 시 단순 선형 탐색 대비 효율적인 탐색을 수행합니다.
-
-> 지원 포맷
-
-- JPG
-- PNG
-- PDF
-
-### 알고리즘 & 로직
-
-본 도구는 유한 상태 기계(Finite State Machine) 모델을 기반으로 동작합니다.
-
-1. SEARCHING: 버퍼 내에서 타겟 파일의 헤더 시그니처를 스캔합니다.
-2. EXTRACTING: 헤더 발견 시 파일 쓰기를 시작하며, 다음 이벤트를 감시합니다.
-    
-    - 푸터 발견: 유효한 종료 지점을 식별하여 파일 저장을 완료하고 다시 SEARCHING 상태로 전이합니다.
-    - 헤더 충돌: 새로운 파일 헤더가 발견되면 현재 파일 추출을 강제 종료하고 새 파일을 생성합니다.
-
-### 빌드 & 실행
-
-> 환경 요구 사항
-
-- OS: Linux(Ubuntu 24.04 LTS 권장)
-- Compiler: g++(C++17 지원 필수)
-- Build Tool: CMake 3.10 이상
-
-> 빌드 방법
-
+## Build and test
 ```bash
-# 1. 리포지토리 복제
-git clone https://github.com/kmwook03/FILE-EdoTensei.git
-cd FILE-EdoTensei
-
-# 2. 빌드 디렉토리 생성 및 이동
-mkdir build && cd build
-
-# 3. CMake 설정 및 컴파일 수행
-cmake ..
-make
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
-> 실행 방법
+The executable is written to `app/FILEEdo`. A sanitizer configuration is also
+available:
 
 ```bash
-# 실제 연결된 물리 디스크로 설정해주세요.
-# 예) /dev/sde
-sudo ./app/FILEEdo /dev/sde
+cmake -S . -B build-sanitize -DCMAKE_BUILD_TYPE=Debug \
+  -DFILEEDO_ENABLE_SANITIZERS=ON
+cmake --build build-sanitize
+ctest --test-dir build-sanitize --output-on-failure
 ```
+
+Tests use dependency-free C++ checks and deterministic fixtures produced by
+`test/generate_fixtures.py`. The fixtures cover mixed content, corrupt and
+truncated files, repeat runs, and a signature crossing the 1 MiB scan boundary.
+For repeatable throughput measurements, generate sparse images of selected sizes
+with `python3 test/benchmark.py ./app/FILEEdo`.
+The latest local baseline is recorded in `docs/benchmark.md`.
+
+## Usage
+```bash
+./app/FILEEdo disk.img
+```
+
+Available options are:
+
+```text
+--output <directory>       Recovery destination (default: current directory)
+--report <path>            Streaming JSON Lines report
+--mode raw|ntfs|hybrid     Recovery source (default: hybrid)
+--min-confidence <0-100>   Reject candidates below the threshold
+```
+
+`hybrid` detects an NTFS VBR at byte zero or in an MBR partition and also runs
+raw carving. If NTFS is not detected it falls back to raw recovery. Explicit
+`ntfs` mode fails on unsupported input. Prefer image files during development;
+only use `sudo` when direct access to a block device is necessary.
+
+## Architecture
+
+- `Searcher` is a stateful Aho-Corasick scanner. Pattern IDs are stable, matches
+  use absolute 64-bit offsets, and automaton state crosses read boundaries.
+- `FormatRegistry` owns descriptors and `FormatCarver` implementations.
+  `RecoveryCandidate`, `ValidationResult`, and `RecoveryResult` are the shared
+  contracts between discovery, validation, extraction, NTFS, and reporting.
+- Candidates are validated through random-access reads before any output is
+  created. JPEG markers, PNG chunks and CRCs, and PDF version/EOF/xref evidence
+  are handled by separate modules.
+- Accepted content is written completely to a temporary file, synced, and
+  atomically renamed. Existing output is never overwritten; `_1`, `_2`, and so
+  on are selected deterministically.
+- NTFS parsing validates volume geometry and arithmetic, applies MFT update
+  sequence fixups, bounds-checks attributes and data runs, and supports resident,
+  nonresident, fragmented, and sparse unnamed data streams. Metadata-derived
+  extent streams are validated by the same format modules as raw candidates.
+
+The extension point for a new format is `FormatCarver`: add stable header and
+structural patterns, implement end estimation and validation, then register the
+module in `FormatRegistry`. Maximum recovery size is held by each format's
+descriptor.
+
+## Report schema
+The optional report is JSON Lines so records remain useful if a later candidate
+fails. Each candidate record contains:
+
+- `record_type`, `report_version`, and input path/size;
+- absolute start offset and physical/sparse extents;
+- format, recovery method, output path, and recovered byte count;
+- accepted state, validation state, confidence, and truncation reason;
+- named score contributions and warnings.
+
+The final line is a summary with accepted, rejected, and error counts. Version 1
+fields keep their meaning; incompatible schema changes require a new
+`report_version`.
+
+## Validation and confidence
+Confidence is normalized to 0–100 from named contributions: header evidence,
+structural parsing, valid end markers, PNG checksums or PDF cross-reference
+evidence, and NTFS extent consistency. Truncation and invalid structure reduce
+the score. The threshold filters output but rejected candidates are still
+reported.
+
+## Known limits
+
+- Raw carving assumes contiguous content; speculative fragment reassembly is
+  intentionally not attempted.
+- NTFS attribute lists, compressed streams, and encrypted streams are rejected.
+- Deleted clusters may have been overwritten even when metadata remains.
+- PDF validation is structural evidence, not a full implementation of ISO 32000.
+- Recovery from live devices can race filesystem activity. Work from a
+  write-protected image whenever possible.
+
+Never commit disk images, recovered user data, or generated output.
