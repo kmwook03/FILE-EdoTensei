@@ -1,94 +1,49 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <cstdint>
-#include "signature.hpp"
+
+#include "format_carver.hpp"
+#include "io.hpp"
+#include "report.hpp"
 #include "searcher.hpp"
 
-// Class for carving files from a disk image
+#include <cstdint>
+#include <string>
+#include <vector>
+
+enum class RecoveryMode { Raw, Ntfs, Hybrid };
+
+struct CarverOptions {
+    std::string inputPath;
+    std::string outputDirectory = ".";
+    std::string reportPath;
+    RecoveryMode mode = RecoveryMode::Hybrid;
+    int minimumConfidence = 0;
+};
+
+struct CarvingSummary {
+    uint64_t accepted = 0;
+    uint64_t rejected = 0;
+    uint64_t errors = 0;
+};
+
 class FileCarver {
 public:
-    /** 
-     * @brief Constructor
-     * @param path: Path to the disk image file
-     */
+    explicit FileCarver(CarverOptions options);
     explicit FileCarver(const std::string& path);
-
-    /** 
-     * @brief Destructor
-     */
-    ~FileCarver();
-
-    /** 
-     * @brief Initialize the carver
-     * @return: true if initialization is successful, false otherwise
-     */
     bool initialize();
-
-    /** 
-     * @brief Start the file carving process
-     * @return: void
-     */
-    void startCarving();
+    bool startCarving();
+    const std::string& lastError() const { return lastError_; }
+    const CarvingSummary& summary() const { return summary_; }
 
 private:
-    // --- I/O and Disk info ---
-    std::string filePath_;                           // Path to the image file
-    int fd_ = -1;                                    // File descriptor for the input file
-    uint64_t diskSize_ = 0;                          // Size of the disk image
-    const size_t bufferSize_ = 1024 * 1024;          // Buffer size for reading the file
+    bool scanRaw(std::vector<RecoveryCandidate>& candidates);
+    bool processCandidates(std::vector<RecoveryCandidate>& candidates);
+    bool reportResult(const RecoveryResult& result);
 
-    // --- Carving state management ---
-    bool isExtracting_ = false;                      // Flag to indicate if currently extracting a file
-    uint64_t lastProcessedOffset_ = 0;               // Last processed offset in the disk image
-    const FormatDescriptor* activeFormat_ = nullptr; // Currently active file format being processed
-    int out_fd_ = -1;                     // Output file descriptor
-    std::vector<FormatDescriptor> formats_; // Vector of file formats to look for
+    CarverOptions options_;
+    ImageReader image_;
+    FormatRegistry registry_;
     Searcher scanner_;
-    off_t lastValidFooterOffset_ = 0;
-
-    // --- Private Methods ---
-
-    /** 
-     * Scan a buffer for file signatures
-     * @param buffer: The buffer to scan
-     * @param currentOffset: The current offset in the file
-     * @return: void
-     */
-    void scanBuffer(const std::vector<uint8_t>& buffer, uint64_t currentOffset);
-
-    const SearchMatch* findNextHeaderMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
-    const SearchMatch* findNextCollisionMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
-    const SearchMatch* findNextFooterMatch(const std::vector<SearchMatch>& matches, size_t startIdx) const;
-
-    /**
-     * @brief Start a new file extraction
-     * @param offset: The offset in the disk image where the file starts
-     * @return: void
-     */
-    void startNewFile(uint64_t offset);
-
-    /** 
-     * @brief Write data to the currently extracted file
-     * @param data: Pointer to the data to write
-     * @param size: Size of the data to write
-     * @return: void
-     */
-    void writeData(const uint8_t* data, size_t size);
-
-    /** 
-     * @brief Finish the current file extraction
-     * @return: void
-     */
-    void finishFile();
-
-    /**
-     * 
-     */
-    void recordCandidateEndOfFile();
-
-    /**
-     * 
-     */
-    void finalizeIncrementalFile();
+    JsonlReport report_;
+    CarvingSummary summary_;
+    std::string lastError_;
 };

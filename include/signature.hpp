@@ -1,109 +1,42 @@
 #pragma once
-#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
 
-enum class PatternKind {
-    Header,
-    Footer
-};
-
-enum class FooterPolicy {
-    None,
-    Required,
-    Incremental
-};
+enum class PatternKind { Header, Footer, StructuralAnchor };
 
 struct BytePattern {
+    std::string id;
     PatternKind kind;
     std::vector<uint8_t> bytes;
-    std::string label;
-
-    BytePattern(PatternKind patternKind, std::vector<uint8_t> patternBytes, std::string patternLabel)
-        : kind(patternKind), bytes(patternBytes), label(patternLabel) {}
 };
 
 struct FormatDescriptor {
-    std::string extension;              // File extension used for recovered output
-    std::string name;                   // Human-readable format name
-    std::vector<BytePattern> patterns;  // Header/footer byte patterns used by the carver
-    FooterPolicy footerPolicy;
-    bool allowEmbeddedJpgHeaders;
-    size_t maxFileSize;
-
-    FormatDescriptor(std::string ext,
-                     std::string formatName,
-                     std::vector<BytePattern> formatPatterns,
-                     FooterPolicy policy,
-                     bool allowJpgHeaders = false,
-                     size_t maxSize = 100 * 1024 * 1024)
-        : extension(ext),
-          name(formatName),
-          patterns(formatPatterns),
-          footerPolicy(policy),
-          allowEmbeddedJpgHeaders(allowJpgHeaders),
-          maxFileSize(maxSize) {}
-
-    const BytePattern* primaryHeader() const {
-        for (const auto& pattern : patterns) {
-            if (pattern.kind == PatternKind::Header) {
-                return &pattern;
-            }
-        }
-        return nullptr;
-    }
-
-    const BytePattern* primaryFooter() const {
-        for (const auto& pattern : patterns) {
-            if (pattern.kind == PatternKind::Footer) {
-                return &pattern;
-            }
-        }
-        return nullptr;
-    }
-
-    bool hasFooter() const {
-        return footerPolicy != FooterPolicy::None && primaryFooter() != nullptr;
-    }
-
-    bool isIncremental() const {
-        return footerPolicy == FooterPolicy::Incremental;
-    }
+    std::string id;
+    std::string extension;
+    std::string name;
+    std::vector<BytePattern> patterns;
+    uint64_t maxFileSize;
 };
 
 class SignatureDB {
 public:
     static std::vector<FormatDescriptor> getFormats() {
+        constexpr uint64_t mib = 1024ULL * 1024ULL;
         return {
-            FormatDescriptor(
-                "jpg",
-                "JPEG image",
-                {
-                    BytePattern(PatternKind::Header, {0xFF, 0xD8, 0xFF}, "SOI"),
-                    BytePattern(PatternKind::Footer, {0xFF, 0xD9}, "EOI")
-                },
-                FooterPolicy::Required
-            ),
-            FormatDescriptor(
-                "png",
-                "PNG image",
-                {
-                    BytePattern(PatternKind::Header, {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, "PNG signature"),
-                    BytePattern(PatternKind::Footer, {0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82}, "IEND")
-                },
-                FooterPolicy::Required
-            ),
-            FormatDescriptor(
-                "pdf",
-                "PDF document",
-                {
-                    BytePattern(PatternKind::Header, {0x25, 0x50, 0x44, 0x46, 0x2D}, "PDF header"),
-                    BytePattern(PatternKind::Footer, {0x25, 0x25, 0x45, 0x4F, 0x46}, "EOF")
-                },
-                FooterPolicy::Incremental,
-                true
-            )
+            {"jpeg", "jpg", "JPEG image",
+             {{"jpeg.soi", PatternKind::Header, {0xff, 0xd8, 0xff}},
+              {"jpeg.eoi", PatternKind::Footer, {0xff, 0xd9}}}, 100 * mib},
+            {"png", "png", "PNG image",
+             {{"png.signature", PatternKind::Header,
+               {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}},
+              {"png.iend", PatternKind::Footer,
+               {0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}}}, 100 * mib},
+            {"pdf", "pdf", "PDF document",
+             {{"pdf.header", PatternKind::Header, {'%', 'P', 'D', 'F', '-'}},
+              {"pdf.eof", PatternKind::Footer, {'%', '%', 'E', 'O', 'F'}},
+              {"pdf.startxref", PatternKind::StructuralAnchor,
+               {'s', 't', 'a', 'r', 't', 'x', 'r', 'e', 'f'}}}, 500 * mib}
         };
     }
 };

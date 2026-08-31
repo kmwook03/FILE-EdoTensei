@@ -15,6 +15,7 @@ output/
 data/samples/
 logs/
 build/
+build-*/
 app/
 recovered_files/
 AGENTS.md
