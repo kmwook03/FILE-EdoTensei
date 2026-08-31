@@ -20,6 +20,8 @@ app/
 recovered_files/
 AGENTS.md
 plan.md
+.agents/
+.codex/
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
