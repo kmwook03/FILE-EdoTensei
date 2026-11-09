@@ -18,10 +18,12 @@ build/
 build-*/
 app/
 recovered_files/
+docs/usb-recovery-expansion.md
 AGENTS.md
 plan.md
 .agents/
 .codex/
+.vscode/
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
