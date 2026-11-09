@@ -14,43 +14,39 @@ else()
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/app)
 endif()
 
-set(SOURCES
-    src/main.cpp
+set(CORE_SOURCES
     src/carver.cpp
     src/searcher.cpp
     src/formats.cpp
     src/io.cpp
     src/report.cpp
     src/disk_io.cpp
+    src/candidate_reader.cpp
+    src/work_budget.cpp
 )   
 
-add_executable(FILEEdo ${SOURCES})
+add_library(FILEEdoCore STATIC ${CORE_SOURCES})
+add_executable(FILEEdo src/main.cpp)
+target_link_libraries(FILEEdo PRIVATE FILEEdoCore)
 
-target_include_directories(FILEEdo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(FILEEdo PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(FILEEdoCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_options(FILEEdoCore PUBLIC -Wall -Wextra -Wpedantic)
 if(FILEEDO_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(FILEEdo PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-    target_link_libraries(FILEEdo PRIVATE -fsanitize=address,undefined)
+    target_compile_options(FILEEdoCore PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_libraries(FILEEdoCore PUBLIC -fsanitize=address,undefined)
 endif()
 
 include(CTest)
 if(BUILD_TESTING)
     find_program(PYTHON_EXECUTABLE python3 REQUIRED)
-    add_executable(FILEEdoTests
-        test/tests.cpp
-        src/searcher.cpp
-        src/formats.cpp
-        src/io.cpp
-        src/report.cpp
-        src/disk_io.cpp
-    )
-    target_include_directories(FILEEdoTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    target_compile_options(FILEEdoTests PRIVATE -Wall -Wextra -Wpedantic)
-    if(FILEEDO_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(FILEEdoTests PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_libraries(FILEEdoTests PRIVATE -fsanitize=address,undefined)
-    endif()
+    add_executable(FILEEdoTests test/tests.cpp)
+    target_link_libraries(FILEEdoTests PRIVATE FILEEdoCore)
+    add_executable(FILEEdoP0Tests test/p0_tests.cpp)
+    target_link_libraries(FILEEdoP0Tests PRIVATE FILEEdoCore)
     add_test(NAME unit COMMAND FILEEdoTests)
+    add_test(NAME p0_unit COMMAND FILEEdoP0Tests)
+    add_test(NAME p0_integration COMMAND ${PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/p0_integration.py $<TARGET_FILE:FILEEdo>)
     add_test(NAME integration
         COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:FILEEdo>

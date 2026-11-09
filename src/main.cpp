@@ -1,6 +1,7 @@
 #include "carver.hpp"
 
 #include <cerrno>
+#include <charconv>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -12,7 +13,10 @@ void usage(const char* program) {
               << "  --output <directory>       Recovery destination (default: current directory)\n"
               << "  --report <path>            Write a JSON Lines recovery report\n"
               << "  --mode raw|ntfs|hybrid     Recovery source (default: hybrid)\n"
-              << "  --min-confidence <0-100>   Filter low-confidence candidates\n";
+              << "  --min-confidence <0-100>   Filter low-confidence candidates\n"
+              << "  --time-limit <seconds>    Whole-job deadline (default: 7200; 0 disables)\n"
+              << "  --max-candidates <count>  Discovery cap (default: 100000)\n"
+              << "  --max-matches <count>     Scanner match cap (default: 1000000)\n";
 }
 
 bool parseArguments(int argc, char* argv[], CarverOptions& options, std::string& error) {
@@ -42,6 +46,20 @@ bool parseArguments(int argc, char* argv[], CarverOptions& options, std::string&
                 error = "minimum confidence must be an integer from 0 to 100"; return false;
             }
             options.minimumConfidence = static_cast<int>(parsed);
+        } else if (argument == "--time-limit" || argument == "--max-candidates" || argument == "--max-matches") {
+            const char* v = value(argument.c_str()); if (!v) return false;
+            const std::string text(v);
+            uint64_t number = 0;
+            const auto parsed = std::from_chars(text.data(), text.data() + text.size(), number);
+            if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
+                error = argument + " requires an unsigned integer"; return false;
+            }
+            if (argument == "--time-limit") {
+                const auto maximum = std::chrono::milliseconds::max().count() / 1000;
+                if (number > static_cast<uint64_t>(maximum)) { error = "time limit is too large"; return false; }
+                options.limits.timeLimit = std::chrono::milliseconds(number * 1000);
+            } else if (argument == "--max-candidates") options.limits.maximumCandidates = number;
+            else options.limits.maximumMatches = number;
         } else if (argument == "--help" || argument == "-h") {
             usage(argv[0]); std::exit(0);
         } else if (!argument.empty() && argument[0] == '-') {
@@ -69,8 +87,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     if (!carver.startCarving()) {
-        std::cerr << "Error: " << carver.lastError() << '\n';
-        return 1;
+        std::cerr << (carver.summary().errors ? "Error: " : "Incomplete: ") << carver.lastError() << '\n';
+        return carver.summary().errors ? 1 : 3;
     }
     const auto& summary = carver.summary();
     std::cout << "[*] Complete: " << summary.accepted << " accepted, "

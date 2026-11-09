@@ -44,6 +44,9 @@ bool JsonlReport::writeResult(const RecoveryResult& result, std::string& error) 
             << ",\"accepted\":" << (result.accepted ? "true" : "false")
             << ",\"output_path\":\"" << escape(result.outputPath) << "\""
             << ",\"byte_count\":" << result.byteCount
+            << ",\"validated_length\":" << result.validatedLength
+            << ",\"skipped\":" << (result.skipped ? "true" : "false")
+            << ",\"stop_reason\":\"" << escape(result.stopReason) << "\""
             << ",\"confidence\":" << result.confidence
             << ",\"validation\":\"" << toString(result.validationState) << "\""
             << ",\"truncation_reason\":\"" << escape(result.truncationReason) << "\""
@@ -72,11 +75,17 @@ bool JsonlReport::writeResult(const RecoveryResult& result, std::string& error) 
     return true;
 }
 
-bool JsonlReport::writeSummary(uint64_t accepted, uint64_t rejected, uint64_t errors,
-                               std::string& error) {
+bool JsonlReport::writeSummary(const CarvingSummary& summary, std::string& error) {
     if (!stream_.is_open()) return true;
     stream_ << "{\"record_type\":\"summary\",\"report_version\":1,\"accepted\":"
-            << accepted << ",\"rejected\":" << rejected << ",\"errors\":" << errors << "}\n";
+            << summary.accepted << ",\"rejected\":" << summary.rejected << ",\"errors\":" << summary.errors
+            << ",\"skipped\":" << summary.skipped << ",\"discovered\":" << summary.discovered
+            << ",\"matches\":" << summary.matches << ",\"raw_scanned_bytes\":" << summary.rawScannedBytes
+            << ",\"raw_scan_performed\":" << (summary.rawScanPerformed ? "true" : "false")
+            << ",\"raw_scan_complete\":" << (summary.rawScanComplete ? "true" : "false")
+            << ",\"elapsed_ms\":" << summary.elapsedMilliseconds
+            << ",\"complete\":" << (summary.complete ? "true" : "false")
+            << ",\"stop_reason\":\"" << escape(summary.stopReason) << "\"}\n";
     stream_.flush();
     if (!stream_) { error = "failed to write report summary"; return false; }
     return true;

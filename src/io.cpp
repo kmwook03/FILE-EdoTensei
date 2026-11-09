@@ -1,4 +1,5 @@
 #include "io.hpp"
+#include "candidate_reader.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -12,9 +13,10 @@
 #include <unistd.h>
 
 namespace {
-bool writeAll(int fd, const uint8_t* data, size_t size, std::string& error) {
+bool writeAll(int fd, const uint8_t* data, size_t size, std::string& error, WorkBudget* budget) {
     size_t done = 0;
     while (done < size) {
+        if (budget && !budget->check()) { error = toString(budget->stopReason()); return false; }
         const ssize_t count = ::write(fd, data + done, size - done);
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) {
@@ -50,7 +52,6 @@ bool ImageReader::open(const std::string& path, std::string& error) {
             return false;
         }
     }
-    path_ = path;
     return true;
 }
 
@@ -58,7 +59,6 @@ void ImageReader::close() {
     if (fd_ >= 0) ::close(fd_);
     fd_ = -1;
     size_ = 0;
-    path_.clear();
 }
 
 bool ImageReader::read(uint64_t offset, void* buffer, size_t size, size_t& bytesRead,
@@ -70,11 +70,12 @@ bool ImageReader::read(uint64_t offset, void* buffer, size_t size, size_t& bytes
     }
     auto* output = static_cast<uint8_t*>(buffer);
     while (bytesRead < size) {
+        if (budget_ && !budget_->check()) { error = toString(budget_->stopReason()); return false; }
         const uint64_t current = offset + bytesRead;
         if (current < offset || current > static_cast<uint64_t>(std::numeric_limits<off_t>::max())) {
             error = "read offset overflow"; return false;
         }
-        const ssize_t count = pread(fd_, output + bytesRead, size - bytesRead,
+        const ssize_t count = pread(fd_, output + bytesRead, std::min<size_t>(size - bytesRead, 1024 * 1024),
                                     static_cast<off_t>(current));
         if (count < 0 && errno == EINTR) continue;
         if (count < 0) { error = std::string("read failed: ") + std::strerror(errno); return false; }
@@ -92,22 +93,22 @@ bool ImageReader::readExact(uint64_t offset, void* buffer, size_t size,
     return true;
 }
 
-bool ImageReader::readVector(uint64_t offset, size_t size, std::vector<uint8_t>& output,
-                             std::string& error) const {
-    output.resize(size);
-    size_t count = 0;
-    if (!read(offset, output.data(), size, count, error)) return false;
-    output.resize(count);
-    return true;
-}
-
 bool writeRecoveredFile(const ImageReader& image, const std::vector<Extent>& extents,
                         uint64_t byteLimit, const std::string& outputDirectory,
                         const std::string& baseName, std::string& finalPath,
                         uint64_t& bytesWritten, std::string& error,
-                        const std::vector<uint8_t>* residentData) {
+                        const std::vector<uint8_t>* residentData, WorkBudget* budget) {
     namespace fs = std::filesystem;
+    budget = budget ? budget : image.budget();
+    finalPath.clear();
     bytesWritten = 0;
+    if (budget && !budget->check()) { error = toString(budget->stopReason()); return false; }
+    RecoveryCandidate candidate;
+    candidate.extents = extents;
+    candidate.logicalSize = byteLimit;
+    if (residentData) candidate.residentData = *residentData;
+    CandidateReader reader(image, candidate, budget);
+    if (!reader.valid()) { error = reader.error(); return false; }
     std::error_code ec;
     fs::create_directories(outputDirectory, ec);
     if (ec) { error = "cannot create output directory: " + ec.message(); return false; }
@@ -116,6 +117,7 @@ bool writeRecoveredFile(const ImageReader& image, const std::vector<Extent>& ext
     const fs::path stem = chosen.stem();
     const fs::path extension = chosen.extension();
     for (uint64_t suffix = 1;; ++suffix) {
+        if (budget && !budget->check()) { error = toString(budget->stopReason()); return false; }
         const fs::path tempCheck = chosen.string() + ".tmp";
         if (!fs::exists(chosen, ec) && !fs::exists(tempCheck, ec)) break;
         chosen = fs::path(outputDirectory) / (stem.string() + "_" +
@@ -127,47 +129,21 @@ bool writeRecoveredFile(const ImageReader& image, const std::vector<Extent>& ext
 
     bool ok = true;
     std::vector<uint8_t> buffer(1024 * 1024);
-    uint64_t remaining = byteLimit;
-    if (residentData && !residentData->empty()) {
-        if (byteLimit > residentData->size()) {
-            error = "resident data is shorter than the promised length";
-            ok = false;
-        } else {
-            ok = writeAll(out, residentData->data(), static_cast<size_t>(byteLimit), error);
-            if (ok) { bytesWritten = byteLimit; remaining = 0; }
-        }
+    while (bytesWritten < byteLimit && ok) {
+        const size_t amount = static_cast<size_t>(std::min<uint64_t>(buffer.size(), byteLimit - bytesWritten));
+        ok = reader.readExact(bytesWritten, buffer.data(), amount, error) &&
+             writeAll(out, buffer.data(), amount, error, budget);
+        if (ok) bytesWritten += amount;
     }
-    for (const auto& extent : extents) {
-        if (residentData && !residentData->empty()) break;
-        uint64_t position = extent.offset;
-        uint64_t extentRemaining = std::min(extent.length, remaining);
-        while (extentRemaining > 0 && ok) {
-            const size_t amount = static_cast<size_t>(std::min<uint64_t>(buffer.size(), extentRemaining));
-            if (extent.sparse) {
-                std::fill(buffer.begin(), buffer.begin() + amount, 0);
-            } else {
-                size_t got = 0;
-                if (!image.read(position, buffer.data(), amount, got, error) || got != amount) {
-                    if (error.empty()) error = "source extent ended early";
-                    ok = false;
-                    break;
-                }
-                position += amount;
-            }
-            ok = writeAll(out, buffer.data(), amount, error);
-            extentRemaining -= amount;
-            remaining -= amount;
-            bytesWritten += amount;
-        }
-        if (remaining == 0 || !ok) break;
-    }
-    if (remaining != 0 && ok) { error = "extents did not contain the promised length"; ok = false; }
+    if (ok && budget && !budget->check()) { error = toString(budget->stopReason()); ok = false; }
     if (ok && fsync(out) != 0) { error = std::string("fsync failed: ") + std::strerror(errno); ok = false; }
     if (::close(out) != 0 && ok) { error = std::string("close failed: ") + std::strerror(errno); ok = false; }
-    if (!ok) { ::unlink(temporary.c_str()); return false; }
+    if (ok && budget && !budget->check()) { error = toString(budget->stopReason()); ok = false; }
+    if (!ok) { ::unlink(temporary.c_str()); bytesWritten = 0; return false; }
     if (::rename(temporary.c_str(), chosen.c_str()) != 0) {
         error = std::string("rename failed: ") + std::strerror(errno);
         ::unlink(temporary.c_str());
+        bytesWritten = 0;
         return false;
     }
     finalPath = chosen.string();

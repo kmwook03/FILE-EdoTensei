@@ -1,8 +1,10 @@
 #include "disk_io.hpp"
+#include "format_carver.hpp"
 
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <utility>
 
 namespace {
 uint16_t le16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
@@ -20,13 +22,6 @@ bool addMul(uint64_t base, uint64_t value, uint64_t multiplier, uint64_t& result
     result = base + value * multiplier;
     return true;
 }
-std::string formatFromBytes(const uint8_t* data, size_t size) {
-    if (size >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff) return "jpeg";
-    const uint8_t png[] = {0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
-    if (size >= sizeof(png) && std::equal(std::begin(png), std::end(png), data)) return "png";
-    if (size >= 5 && std::equal(data, data + 5, reinterpret_cast<const uint8_t*>("%PDF-"))) return "pdf";
-    return {};
-}
 std::string simpleUtf16Name(const uint8_t* data, size_t characters) {
     std::string output;
     for (size_t i = 0; i < characters; ++i) {
@@ -36,28 +31,10 @@ std::string simpleUtf16Name(const uint8_t* data, size_t characters) {
     }
     return output;
 }
-bool readExtentStream(const ImageReader& image, const std::vector<Extent>& extents,
-                      uint64_t logicalOffset, void* destination, size_t size,
-                      std::string& error) {
-    auto* output = static_cast<uint8_t*>(destination);
-    size_t completed = 0;
-    uint64_t skip = logicalOffset;
-    for (const auto& extent : extents) {
-        if (skip >= extent.length) { skip -= extent.length; continue; }
-        const size_t amount = static_cast<size_t>(std::min<uint64_t>(
-            size - completed, extent.length - skip));
-        if (extent.sparse) std::fill(output + completed, output + completed + amount, 0);
-        else if (!image.readExact(extent.offset + skip, output + completed, amount, error)) return false;
-        completed += amount;
-        skip = 0;
-        if (completed == size) return true;
-    }
-    error = "MFT extent stream ended early";
-    return false;
-}
 }
 
-bool NTFSReader::openImage(const std::string& path, std::string& error) {
+bool NTFSReader::openImage(const std::string& path, std::string& error, WorkBudget* budget) {
+    image_.setBudget(budget);
     detected_ = false;
     return image_.open(path, error);
 }
@@ -96,7 +73,6 @@ bool NTFSReader::parseBootSector(uint64_t offset, std::string& error) {
     recordSize_ = static_cast<uint32_t>(recordSize);
     bytesPerSector_ = sector;
     detected_ = true;
-    mftExtents_.clear();
     return true;
 }
 
@@ -172,8 +148,34 @@ bool NTFSReader::parseDataRuns(const uint8_t* data, size_t size,
     return true;
 }
 
-bool NTFSReader::parseRecord(uint64_t diskOffset, std::vector<uint8_t>& record,
-                             RecoveryCandidate& candidate, std::string& warning) {
+bool NTFSReader::mapDataRuns(const std::vector<MFT_Segment>& runs, uint64_t logicalSize,
+                             bool allowSparse, std::vector<Extent>& extents, std::string& error) const {
+    uint64_t remaining = logicalSize;
+    if (remaining == 0) { error = "NTFS data has zero logical size"; return false; }
+    std::vector<Extent> mapped;
+    for (const auto& run : runs) {
+        if (run.sparse && !allowSparse) { error = "sparse NTFS MFT is unsupported"; return false; }
+        if (run.length > std::numeric_limits<uint64_t>::max() / bytesPerCluster_) {
+            error = "NTFS data run length overflow"; return false;
+        }
+        const uint64_t bytes = std::min(remaining, run.length * bytesPerCluster_);
+        uint64_t offset = 0;
+        if (!run.sparse && !addMul(partitionOffset_, run.lcn, bytesPerCluster_, offset)) {
+            error = "NTFS data run offset overflow"; return false;
+        }
+        mapped.push_back({offset, bytes, run.sparse});
+        remaining -= bytes;
+        if (remaining == 0) {
+            extents.insert(extents.end(), mapped.begin(), mapped.end());
+            return true;
+        }
+    }
+    error = "NTFS runs shorter than logical data size";
+    return false;
+}
+
+bool NTFSReader::parseRecord(const CandidateReader& mft, uint64_t recordOffset, std::vector<uint8_t>& record,
+                             RecoveryCandidate& candidate, const FormatRegistry& registry, std::string& warning) {
     if (record.size() < 48 || !std::equal(record.begin(), record.begin() + 4,
                                           reinterpret_cast<const uint8_t*>("FILE"))) return false;
     if ((le16(record.data() + 22) & 0x01) != 0 || (le16(record.data() + 22) & 0x02) != 0) return false;
@@ -184,8 +186,6 @@ bool NTFSReader::parseRecord(uint64_t diskOffset, std::vector<uint8_t>& record,
     size_t position = le16(record.data() + 20);
     if (used > record.size() || position >= used) return false;
     uint64_t logicalSize = 0;
-    std::array<uint8_t, 8> prefix{};
-    size_t prefixSize = 0;
     while (position + 16 <= used) {
         const uint32_t type = le32(record.data() + position);
         if (type == 0xffffffffU) break;
@@ -211,12 +211,10 @@ bool NTFSReader::parseRecord(uint64_t diskOffset, std::vector<uint8_t>& record,
                 const uint16_t valueOffset = le16(record.data() + position + 20);
                 if (valueOffset > length || valueLength > length - valueOffset) return false;
                 logicalSize = valueLength;
-                const uint64_t valueDiskOffset = diskOffset + position + valueOffset;
-                candidate.extents = {{valueDiskOffset, valueLength, false}};
+                if (valueLength == 0 || !mft.physicalExtents(recordOffset + position + valueOffset,
+                                                          valueLength, candidate.extents, warning)) return false;
                 candidate.residentData.assign(record.begin() + position + valueOffset,
                                               record.begin() + position + valueOffset + valueLength);
-                prefixSize = std::min<size_t>(prefix.size(), valueLength);
-                std::copy_n(record.data() + position + valueOffset, prefixSize, prefix.begin());
             } else {
                 if (length < 64) return false;
                 const uint16_t runOffset = le16(record.data() + position + 32);
@@ -224,44 +222,32 @@ bool NTFSReader::parseRecord(uint64_t diskOffset, std::vector<uint8_t>& record,
                 if (runOffset >= length) return false;
                 std::vector<MFT_Segment> runs;
                 if (!parseDataRuns(record.data() + position + runOffset, length - runOffset, runs, warning)) return false;
-                uint64_t remaining = logicalSize;
-                for (const auto& run : runs) {
-                    if (run.length > std::numeric_limits<uint64_t>::max() / bytesPerCluster_) return false;
-                    const uint64_t bytes = std::min(remaining, run.length * bytesPerCluster_);
-                    uint64_t offset = 0;
-                    if (!run.sparse && !addMul(partitionOffset_, run.lcn, bytesPerCluster_, offset)) return false;
-                    candidate.extents.push_back({offset, bytes, run.sparse});
-                    remaining -= bytes;
-                    if (remaining == 0) break;
-                }
-                if (remaining != 0) { warning = "NTFS runs shorter than logical data size"; return false; }
-                if (!candidate.extents.empty() && !candidate.extents[0].sparse) {
-                    std::string readError;
-                    size_t got = 0;
-                    image_.read(candidate.extents[0].offset, prefix.data(), prefix.size(), got, readError);
-                    prefixSize = got;
-                }
+                if (!mapDataRuns(runs, logicalSize, true, candidate.extents, warning)) return false;
             }
         }
         position += length;
     }
-    candidate.formatId = formatFromBytes(prefix.data(), prefixSize);
-    if (candidate.formatId.empty() || logicalSize == 0 || candidate.extents.empty()) return false;
+    if (logicalSize == 0 || candidate.extents.empty()) return false;
+    candidate.logicalSize = logicalSize;
+    CandidateReader reader(image_, candidate);
+    candidate.formatId = registry.identify(reader);
+    if (candidate.formatId.empty()) return false;
     candidate.method = RecoveryMethod::NtfsMetadata;
     candidate.startOffset = candidate.extents.front().offset;
     candidate.evidence.push_back({"ntfs_deleted_record", 25, "deleted MFT record"});
     candidate.evidence.push_back({"ntfs_extent_consistency", 20, std::to_string(logicalSize) + " bytes"});
-    if (candidate.extents.size() > 1) candidate.warnings.push_back("fragmented metadata extent validation is limited");
     return true;
 }
 
-std::vector<RecoveryCandidate> NTFSReader::findDeletedFiles(std::string& error) {
+std::vector<RecoveryCandidate> NTFSReader::findDeletedFiles(std::string& error, const FormatRegistry& registry) {
+    error.clear();
     std::vector<RecoveryCandidate> candidates;
     if (!detected_) { error = "NTFS volume was not detected"; return candidates; }
     std::vector<uint8_t> record(recordSize_);
     if (!image_.readExact(mftOffset_, record.data(), record.size(), error)) return candidates;
     std::vector<uint8_t> mftHeader = record;
     uint64_t mftLogicalSize = image_.size() - mftOffset_;
+    RecoveryCandidate mftCandidate;
     std::string fixupError;
     if (std::equal(mftHeader.begin(), mftHeader.begin() + 4,
                    reinterpret_cast<const uint8_t*>("FILE")) &&
@@ -280,47 +266,37 @@ std::vector<RecoveryCandidate> NTFSReader::findDeletedFiles(std::string& error) 
                 std::vector<MFT_Segment> runs;
                 if (runOffset < length && parseDataRuns(mftHeader.data() + attribute + runOffset,
                                                         length - runOffset, runs, error)) {
-                    uint64_t remaining = mftLogicalSize;
-                    for (const auto& run : runs) {
-                        if (run.sparse || run.length > std::numeric_limits<uint64_t>::max() / bytesPerCluster_) {
-                            mftExtents_.clear(); break;
-                        }
-                        const uint64_t bytes = std::min(remaining, run.length * bytesPerCluster_);
-                        uint64_t offset = 0;
-                        if (!addMul(partitionOffset_, run.lcn, bytesPerCluster_, offset)) {
-                            mftExtents_.clear(); break;
-                        }
-                        mftExtents_.push_back({offset, bytes, false});
-                        remaining -= bytes;
-                        if (remaining == 0) break;
-                    }
-                    if (remaining != 0) mftExtents_.clear();
+                    if (!mapDataRuns(runs, mftLogicalSize, false, mftCandidate.extents, fixupError)) break;
                 }
                 break;
             }
             attribute += length;
         }
     }
-    if (mftExtents_.empty()) mftExtents_.push_back({mftOffset_, mftLogicalSize, false});
+    if (mftCandidate.extents.empty()) mftCandidate.extents.push_back({mftOffset_, mftLogicalSize, false});
+    mftCandidate.logicalSize = mftLogicalSize;
+    CandidateReader mft(image_, mftCandidate);
+    if (!mft.valid()) { error = mft.error(); return candidates; }
     unsigned emptyStreak = 0;
     constexpr uint64_t maximumRecords = 1000000;
     const uint64_t recordCount = std::min<uint64_t>(maximumRecords, mftLogicalSize / recordSize_);
-    for (uint64_t index = 0; index < recordCount && emptyStreak < 256; ++index) {
+    uint64_t index = 0;
+    for (; index < recordCount && emptyStreak < 256; ++index) {
+        if (image_.budget() && !image_.budget()->discoveryAllowed()) break;
         const uint64_t logicalOffset = index * recordSize_;
-        if (!readExtentStream(image_, mftExtents_, logicalOffset, record.data(), record.size(), error)) break;
+        if (!mft.readExact(logicalOffset, record.data(), record.size(), error)) break;
         if (!std::equal(record.begin(), record.begin() + 4,
                         reinterpret_cast<const uint8_t*>("FILE"))) { ++emptyStreak; continue; }
         emptyStreak = 0;
         RecoveryCandidate candidate;
         std::string warning;
-        uint64_t physicalOffset = mftOffset_ + logicalOffset;
-        uint64_t skip = logicalOffset;
-        for (const auto& extent : mftExtents_) {
-            if (skip < extent.length) { physicalOffset = extent.offset + skip; break; }
-            skip -= extent.length;
+        if (parseRecord(mft, logicalOffset, record, candidate, registry, warning)) {
+            if (image_.budget() && !image_.budget()->claimCandidate()) break;
+            candidates.push_back(std::move(candidate));
         }
-        if (parseRecord(physicalOffset, record, candidate, warning)) candidates.push_back(std::move(candidate));
     }
-    error.clear();
+    if (image_.budget() && index == maximumRecords && recordCount < mftLogicalSize / recordSize_)
+        image_.budget()->stopDiscovery(StopReason::MetadataLimit);
+
     return candidates;
 }

@@ -17,29 +17,24 @@ struct CarverOptions {
     std::string reportPath;
     RecoveryMode mode = RecoveryMode::Hybrid;
     int minimumConfidence = 0;
-};
-
-struct CarvingSummary {
-    uint64_t accepted = 0;
-    uint64_t rejected = 0;
-    uint64_t errors = 0;
+    WorkLimits limits;
 };
 
 class FileCarver {
 public:
-    explicit FileCarver(CarverOptions options);
-    explicit FileCarver(const std::string& path);
+    explicit FileCarver(CarverOptions options, WorkBudget::Now now = WorkBudget::Clock::now);
     bool initialize();
     bool startCarving();
     const std::string& lastError() const { return lastError_; }
     const CarvingSummary& summary() const { return summary_; }
+    void cancel() { budget_.cancel(); }
 
 private:
     bool scanRaw(std::vector<RecoveryCandidate>& candidates);
     bool processCandidates(std::vector<RecoveryCandidate>& candidates);
-    bool reportResult(const RecoveryResult& result);
 
     CarverOptions options_;
+    WorkBudget budget_;
     ImageReader image_;
     FormatRegistry registry_;
     Searcher scanner_;

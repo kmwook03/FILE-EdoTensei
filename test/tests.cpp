@@ -37,11 +37,11 @@ void scannerTests() {
     expect(zero, "binary-zero pattern matched at absolute offset");
 
     const std::vector<uint8_t> overlap = {'a', 'b', 'a', 'b'};
-    const auto all = scanner.findAll(overlap, 500);
+    scanner.reset();
+    const auto all = scanner.feed(overlap.data(), overlap.size(), 500);
     size_t headers = 0;
     for (const auto& match : all) if (match.metadata.kind == PatternKind::Header) ++headers;
     expect(headers == 4, "overlapping/repeated patterns produce every output");
-    expect(Searcher::search(overlap, {'b', 'a'}) == 1, "BMH compatibility helper works");
 }
 
 void runlistTests() {

@@ -10,9 +10,7 @@ public:
     bool open(const std::string& path, const std::string& inputPath,
               uint64_t inputSize, std::string& error);
     bool writeResult(const RecoveryResult& result, std::string& error);
-    bool writeSummary(uint64_t accepted, uint64_t rejected, uint64_t errors,
-                      std::string& error);
-    bool enabled() const { return stream_.is_open(); }
+    bool writeSummary(const CarvingSummary& summary, std::string& error);
     static std::string escape(const std::string& value);
 
 private:
