@@ -6,6 +6,7 @@ option(FILEEDO_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorS
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+find_package(ZLIB REQUIRED)
 
 add_definitions(-D_FILE_OFFSET_BITS=64)
 if(FILEEDO_ENABLE_SANITIZERS)
@@ -23,9 +24,11 @@ set(CORE_SOURCES
     src/disk_io.cpp
     src/candidate_reader.cpp
     src/work_budget.cpp
+    src/zip_carver.cpp
 )   
 
 add_library(FILEEdoCore STATIC ${CORE_SOURCES})
+target_link_libraries(FILEEdoCore PUBLIC ZLIB::ZLIB)
 add_executable(FILEEdo src/main.cpp)
 target_link_libraries(FILEEdo PRIVATE FILEEdoCore)
 
@@ -43,10 +46,16 @@ if(BUILD_TESTING)
     target_link_libraries(FILEEdoTests PRIVATE FILEEdoCore)
     add_executable(FILEEdoP0Tests test/p0_tests.cpp)
     target_link_libraries(FILEEdoP0Tests PRIVATE FILEEdoCore)
+    add_executable(FILEEdoP1Tests test/p1_tests.cpp)
+    target_link_libraries(FILEEdoP1Tests PRIVATE FILEEdoCore)
     add_test(NAME unit COMMAND FILEEdoTests)
     add_test(NAME p0_unit COMMAND FILEEdoP0Tests)
+    add_test(NAME p1_unit COMMAND FILEEdoP1Tests)
     add_test(NAME p0_integration COMMAND ${PYTHON_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/test/p0_integration.py $<TARGET_FILE:FILEEdo>)
+    add_test(NAME p1_integration COMMAND ${PYTHON_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/p1_integration.py $<TARGET_FILE:FILEEdo>)
+    set_tests_properties(p1_integration PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     add_test(NAME integration
         COMMAND ${CMAKE_COMMAND}
             -DPROGRAM=$<TARGET_FILE:FILEEdo>

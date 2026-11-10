@@ -10,6 +10,9 @@ that recovered content is complete or authentic.
 ![C++](https://img.shields.io/badge/c%2B%2B-%2300599C.svg?style=for-the-badge&logo=cplusplus&logoColor=white) ![CMake](https://img.shields.io/badge/CMake-%23008FBA.svg?style=for-the-badge&logo=cmake&logoColor=white) ![Ubuntu](https://img.shields.io/badge/Ubuntu-%23E95420.svg?style=for-the-badge&logo=ubuntu&logoColor=white) ![Linux](https://img.shields.io/badge/Linux-%23FCC624.svg?style=for-the-badge&logo=linux&logoColor=black)
 
 ## Build and test
+Requires a C++17 compiler, CMake, and the zlib development package (`zlib1g-dev`
+on Debian/Ubuntu). Python 3 is used by integration tests.
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -32,6 +35,18 @@ truncated files, repeat runs, and a signature crossing the 1 MiB scan boundary.
 P0 tests also compare recovered SHA-256 hashes, exercise reversed and sparse NTFS
 extents and fragmented MFT records, and check deadlines with an injected clock.
 The reader tests cover physical offsets above 4 GiB using a sparse temporary file.
+P1 adds ZIP/ZIP64 CRC and stream verification, descriptor variants, resource
+limits, and ZIP recovery through NTFS extent mappings. Its ordinary regression
+fixtures are small. An opt-in test writes and recovers an actual, non-sparse
+archive larger than 4 GiB (allow at least 9 GiB of free temporary space):
+
+```bash
+python3 test/p1_large_zip.py ./app/FILEEdo --result /tmp/p1-large-result.json
+```
+
+P1 support details and validation measurements are in
+[`docs/p1-zip-validation.md`](docs/p1-zip-validation.md).
+
 For repeatable throughput measurements, generate sparse images of selected sizes
 with `python3 test/benchmark.py ./app/FILEEdo`.
 The latest local baseline is recorded in `docs/benchmark.md`.
@@ -51,6 +66,10 @@ Available options are:
 --time-limit <seconds>    Whole-job deadline (default: 7200; 0 disables)
 --max-candidates <count>  Discovery cap (default: 100000)
 --max-matches <count>     Scanner match cap (default: 1000000)
+--zip-max-size <bytes>    ZIP archive cap (default: 64 GiB)
+--zip-max-entries <count> ZIP entry cap (default: 100000)
+--zip-max-directory <bytes> ZIP metadata cap (default: 64 MiB)
+--zip-max-uncompressed <bytes> ZIP expanded total cap (default: 128 GiB)
 ```
 
 `hybrid` detects an NTFS VBR at byte zero or in an MBR partition and also runs
@@ -118,6 +137,11 @@ cannot be counted as known rejects. `discovered` counts retained discoveries bef
 deduplication. A deadline or cancellation is not reported as source corruption;
 unfinished validation uses `not_validated`. Actual read failures use `io_error`.
 An empty stop reason indicates no recorded stop condition.
+ZIP resource limits use `zip_archive_size_limit`, `zip_entry_limit`,
+`zip_directory_size_limit`, or `zip_uncompressed_size_limit`. The candidate is
+skipped and the job is incomplete (exit 3); other candidates can still finish.
+Unsupported ZIP features and invalid ZIP structures are rejected with specific
+warnings. Truncated ZIP candidates are never published as partial recoveries.
 
 ## Validation and confidence
 Confidence is normalized to 0–100 from named contributions: header evidence,
@@ -131,6 +155,12 @@ reported.
 - Raw carving assumes contiguous content; speculative fragment reassembly is
   intentionally not attempted.
 - NTFS attribute lists, compressed streams, and encrypted streams are rejected.
+- ZIP supports single-volume Store and Deflate, classic and ZIP64 records, and
+  data descriptors with or without signatures. Every entry's size and CRC must
+  pass before the original compressed bytes are copied. Encrypted, multi-disk,
+  SFX, patched, digitally signed, and other compression variants are unsupported.
+  Office/HWPX package classification is a later phase; these containers currently
+  retain the `.zip` extension. No payload files are unpacked to disk.
 - Deleted clusters may have been overwritten even when metadata remains.
 - PDF validation is structural evidence, not a full implementation of ISO 32000.
 - Recovery from live devices can race filesystem activity. Work from a

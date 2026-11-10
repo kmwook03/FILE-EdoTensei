@@ -29,9 +29,16 @@ protected:
     virtual ValidationResult validateContent(const CandidateReader& reader) const = 0;
 };
 
+struct ZipLimits {
+    uint64_t maximumArchiveSize = 64ULL * 1024 * 1024 * 1024;
+    uint64_t maximumEntries = 100000;
+    uint64_t maximumDirectorySize = 64ULL * 1024 * 1024;
+    uint64_t maximumUncompressedSize = 128ULL * 1024 * 1024 * 1024;
+};
+
 class FormatRegistry {
 public:
-    FormatRegistry();
+    explicit FormatRegistry(ZipLimits zipLimits = {});
     const std::vector<FormatDescriptor>& descriptors() const { return descriptors_; }
     const FormatCarver* byIndex(size_t index) const;
     const FormatCarver* byId(const std::string& id) const;

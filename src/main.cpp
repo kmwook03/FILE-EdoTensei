@@ -17,6 +17,10 @@ void usage(const char* program) {
               << "  --time-limit <seconds>    Whole-job deadline (default: 7200; 0 disables)\n"
               << "  --max-candidates <count>  Discovery cap (default: 100000)\n"
               << "  --max-matches <count>     Scanner match cap (default: 1000000)\n";
+    std::cerr << "  --zip-max-size <bytes>    ZIP archive cap (default: 64 GiB)\n"
+              << "  --zip-max-entries <count> ZIP entry cap (default: 100000)\n"
+              << "  --zip-max-directory <bytes> ZIP metadata cap (default: 64 MiB)\n"
+              << "  --zip-max-uncompressed <bytes> ZIP expanded total cap (default: 128 GiB)\n";
 }
 
 bool parseArguments(int argc, char* argv[], CarverOptions& options, std::string& error) {
@@ -46,7 +50,9 @@ bool parseArguments(int argc, char* argv[], CarverOptions& options, std::string&
                 error = "minimum confidence must be an integer from 0 to 100"; return false;
             }
             options.minimumConfidence = static_cast<int>(parsed);
-        } else if (argument == "--time-limit" || argument == "--max-candidates" || argument == "--max-matches") {
+        } else if (argument == "--time-limit" || argument == "--max-candidates" || argument == "--max-matches" ||
+                   argument == "--zip-max-size" || argument == "--zip-max-entries" ||
+                   argument == "--zip-max-directory" || argument == "--zip-max-uncompressed") {
             const char* v = value(argument.c_str()); if (!v) return false;
             const std::string text(v);
             uint64_t number = 0;
@@ -59,7 +65,11 @@ bool parseArguments(int argc, char* argv[], CarverOptions& options, std::string&
                 if (number > static_cast<uint64_t>(maximum)) { error = "time limit is too large"; return false; }
                 options.limits.timeLimit = std::chrono::milliseconds(number * 1000);
             } else if (argument == "--max-candidates") options.limits.maximumCandidates = number;
-            else options.limits.maximumMatches = number;
+            else if (argument == "--max-matches") options.limits.maximumMatches = number;
+            else if (argument == "--zip-max-size") options.zipLimits.maximumArchiveSize = number;
+            else if (argument == "--zip-max-entries") options.zipLimits.maximumEntries = number;
+            else if (argument == "--zip-max-directory") options.zipLimits.maximumDirectorySize = number;
+            else options.zipLimits.maximumUncompressedSize = number;
         } else if (argument == "--help" || argument == "-h") {
             usage(argv[0]); std::exit(0);
         } else if (!argument.empty() && argument[0] == '-') {

@@ -5,6 +5,8 @@
 #include <cctype>
 #include <utility>
 
+std::unique_ptr<FormatCarver> makeZipCarver(const FormatDescriptor& descriptor, ZipLimits limits);
+
 namespace {
 uint16_t be16(const uint8_t* data) {
     return static_cast<uint16_t>((static_cast<uint16_t>(data[0]) << 8) | data[1]);
@@ -283,10 +285,12 @@ ValidationResult FormatCarver::validate(const ImageReader& image, const Recovery
     return result;
 }
 
-FormatRegistry::FormatRegistry() : descriptors_(SignatureDB::getFormats()) {
+FormatRegistry::FormatRegistry(ZipLimits zipLimits) : descriptors_(SignatureDB::getFormats()) {
+    descriptors_[3].maxFileSize = zipLimits.maximumArchiveSize;
     carvers_.push_back(std::make_unique<JpegCarver>(descriptors_[0]));
     carvers_.push_back(std::make_unique<PngCarver>(descriptors_[1]));
     carvers_.push_back(std::make_unique<PdfCarver>(descriptors_[2]));
+    carvers_.push_back(makeZipCarver(descriptors_[3], zipLimits));
 }
 
 const FormatCarver* FormatRegistry::byIndex(size_t index) const {

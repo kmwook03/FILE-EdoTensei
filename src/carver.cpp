@@ -12,7 +12,7 @@
 #include <utility>
 
 FileCarver::FileCarver(CarverOptions options, WorkBudget::Now now)
-    : options_(std::move(options)), budget_(options_.limits, std::move(now)) {}
+    : options_(std::move(options)), budget_(options_.limits, std::move(now)), registry_(options_.zipLimits) {}
 
 bool FileCarver::initialize() {
     if (!image_.open(options_.inputPath, lastError_)) return false;
@@ -86,6 +86,8 @@ bool FileCarver::processCandidates(std::vector<RecoveryCandidate>& candidates) {
         item.carver = registry_.byId(candidates[i].formatId);
         if (!item.carver) { item.validation.diagnostics.push_back("unknown format"); continue; }
         item.validation = item.carver->validate(image_, candidates[i], &budget_);
+        if (!item.validation.stopReason.empty() && summary_.stopReason.empty())
+            summary_.stopReason = item.validation.stopReason;
         if (item.validation.stopReason == "io_error") {
             ++summary_.errors;
             lastError_ = item.validation.diagnostics.empty() ? "input read failed" : item.validation.diagnostics.back();
@@ -198,9 +200,9 @@ bool FileCarver::startCarving() {
     summary_.discovered = budget_.candidateCount();
     summary_.matches = budget_.matchCount();
     summary_.elapsedMilliseconds = budget_.elapsedMilliseconds();
-    summary_.stopReason = toString(budget_.stopReason());
+    if (budget_.stopReason() != StopReason::None) summary_.stopReason = toString(budget_.stopReason());
     if (summary_.errors != 0 && summary_.stopReason.empty()) summary_.stopReason = "io_error";
-    summary_.complete = summary_.errors == 0 && budget_.stopReason() == StopReason::None;
+    summary_.complete = summary_.errors == 0 && summary_.stopReason.empty();
     if (!summary_.complete && lastError_.empty()) lastError_ = summary_.stopReason;
     std::string reportError;
     if (!report_.writeSummary(summary_, reportError)) {

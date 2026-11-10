@@ -36,7 +36,13 @@ public:
              {{"pdf.header", PatternKind::Header, {'%', 'P', 'D', 'F', '-'}},
               {"pdf.eof", PatternKind::Footer, {'%', '%', 'E', 'O', 'F'}},
               {"pdf.startxref", PatternKind::StructuralAnchor,
-               {'s', 't', 'a', 'r', 't', 'x', 'r', 'e', 'f'}}}, 500 * mib}
+               {'s', 't', 'a', 'r', 't', 'x', 'r', 'e', 'f'}}}, 500 * mib},
+            {"zip", "zip", "ZIP archive",
+             {{"zip.local", PatternKind::Header, {0x50, 0x4b, 0x03, 0x04}},
+              {"zip.end", PatternKind::Header, {0x50, 0x4b, 0x05, 0x06}},
+              {"zip.directory", PatternKind::StructuralAnchor, {0x50, 0x4b, 0x01, 0x02}},
+              {"zip.zip64_end", PatternKind::Header, {0x50, 0x4b, 0x06, 0x06}},
+              {"zip.zip64_locator", PatternKind::StructuralAnchor, {0x50, 0x4b, 0x06, 0x07}}}, 65536 * mib}
         };
     }
 };

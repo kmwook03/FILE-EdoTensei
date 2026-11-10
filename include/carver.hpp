@@ -18,6 +18,7 @@ struct CarverOptions {
     RecoveryMode mode = RecoveryMode::Hybrid;
     int minimumConfidence = 0;
     WorkLimits limits;
+    ZipLimits zipLimits;
 };
 
 class FileCarver {
